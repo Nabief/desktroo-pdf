@@ -1,0 +1,270 @@
+<!doctype html>
+<!-- PDF pour Desktroo — © 2026 Mdm-services.fr. Tous droits réservés. Éditeur : PdfCraft (MIT OR Apache-2.0), servi sans modification sous engine/. -->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF</title>
+<link rel="stylesheet" href="../_sdk/desktroo-app.css">
+<script src="../_sdk/desktroo-app.js"></script>
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  .pdf-shell { display: flex; height: 100vh; min-height: 0; }
+  .pdf-side { width: 270px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
+    background: rgba(0,0,0,0.18); border-right: 1px solid rgba(255,255,255,0.07); transition: width .18s; }
+  [data-theme="light"] .pdf-side { background: rgba(13,27,53,0.045); border-right-color: rgba(0,0,0,0.09); }
+  .pdf-shell.folded .pdf-side { width: 0; overflow: hidden; border-right: 0; }
+  .pdf-side-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 6px; }
+  .pdf-side-head .t { flex: 1; font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: .8px; padding-left: 4px; }
+  .pdf-roots { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 10px 8px; }
+  .pdf-root { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--glass-border); background: none; color: var(--text);
+    font: 500 12px var(--font-body); cursor: pointer; }
+  .pdf-root.active { background: rgba(var(--accent-rgb),0.18); border-color: rgba(var(--accent-rgb),0.45); color: var(--accent2); }
+  .pdf-root .ro { font-size: 10px; opacity: .7; margin-left: 4px; }
+  .pdf-crumbs { padding: 2px 14px 8px; font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pdf-crumbs a { color: var(--text-dim); text-decoration: none; cursor: pointer; }
+  .pdf-crumbs a:hover { color: var(--accent2); }
+  .pdf-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 10px; list-style: none; margin: 0; }
+  .pdf-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: var(--radius-sm);
+    background: none; color: var(--text); font: 13px var(--font-body); text-align: left; cursor: pointer; }
+  .pdf-item:hover, .pdf-item:focus-visible { background: rgba(255,255,255,0.07); outline: none; }
+  [data-theme="light"] .pdf-item:hover { background: rgba(0,0,0,0.055); }
+  .pdf-item.current { background: rgba(var(--accent-rgb),0.16); color: var(--accent2); }
+  .pdf-item .ic { width: 18px; flex-shrink: 0; text-align: center; }
+  .pdf-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pdf-item .sz { font-size: 11px; color: var(--text-dim); flex-shrink: 0; }
+  .pdf-note { padding: 10px 14px; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+  .pdf-foot { padding: 8px 14px 10px; font-size: 11px; color: var(--text-dim); border-top: 1px solid rgba(255,255,255,0.07); }
+  .pdf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+  .pdf-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--glass-border); min-height: 40px; }
+  .pdf-bar .doc { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pdf-bar .dirty { color: var(--warning); font-size: 12px; display: none; }
+  .pdf-bar .dirty.on { display: inline; }
+  .pdf-engine { flex: 1; width: 100%; border: 0; background: #19191c; }
+  .pdf-wait { position: absolute; inset: 41px 0 0 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+    background: var(--bg); color: var(--text-dim); font-size: 13px; text-align: center; padding: 20px; }
+  .pdf-wait.hide { display: none; }
+  .pdf-modal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); z-index: 10; }
+  .pdf-modal.on { display: flex; }
+  .pdf-modal .dk-card { width: min(440px, calc(100% - 32px)); }
+  .pdf-modal label { display: block; font-size: 12px; color: var(--text-dim); margin: 10px 0 4px; }
+  .pdf-modal .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .pdf-modal .err { color: var(--danger); font-size: 12.5px; margin-top: 8px; min-height: 1em; }
+</style>
+</head>
+<body>
+<div class="pdf-shell" id="shell">
+  <nav class="pdf-side" aria-label="Dossiers du NAS">
+    <div class="pdf-side-head">
+      <span class="t">Fichiers du NAS</span>
+      <button class="dk-btn" id="refresh" title="Actualiser">↻</button>
+    </div>
+    <div class="pdf-roots" id="roots"></div>
+    <div class="pdf-crumbs" id="crumbs"></div>
+    <ul class="pdf-list" id="list"></ul>
+    <div class="pdf-foot">Éditeur : PdfCraft (logiciel libre, MIT / Apache-2.0)</div>
+  </nav>
+  <section class="pdf-main">
+    <div class="pdf-bar">
+      <button class="dk-btn" id="fold" title="Afficher ou masquer les dossiers">☰</button>
+      <span class="doc" id="doc">Choisissez un PDF à gauche, ou ouvrez-en un depuis votre ordinateur (Fichier › Ouvrir).</span>
+      <span class="dirty" id="dirty">● Modifications non enregistrées</span>
+    </div>
+    <iframe class="pdf-engine" id="engine" title="Éditeur PDF" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+    <div class="pdf-wait" id="wait">Chargement de l’éditeur PDF…<span class="dk-muted" style="font-size:12px">La première ouverture télécharge l’éditeur (environ 15 Mo), ensuite il reste en cache.</span></div>
+  </section>
+</div>
+
+<div class="pdf-modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+  <div class="dk-card">
+    <h2 id="m-title">Enregistrer le PDF</h2>
+    <div class="dk-muted" id="m-where" style="font-size:12.5px"></div>
+    <label for="m-name">Nom du fichier</label>
+    <input class="dk-input" id="m-name" autocomplete="off">
+    <div class="err" id="m-err"></div>
+    <div class="acts">
+      <button class="dk-btn" id="m-cancel">Annuler</button>
+      <button class="dk-btn primary" id="m-ok">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var st = { user: '', roots: [], root: '', dir: '', ready: false, queue: [], files: {}, dirty: false, current: '' };
+  var engine = $('engine');
+
+  function notify(t, level) {
+    if (window.desktroo && desktroo.inDesktroo) desktroo.notify(t, level);
+    else console.log('[pdf]', t);
+  }
+  function api(url, opts) {
+    return fetch(url, Object.assign({ credentials: 'same-origin', cache: 'no-store' }, opts || {})).then(function (r) {
+      if (r.ok) return r;
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        var e = new Error(j.error || ('Erreur ' + r.status)); e.status = r.status; throw e;
+      });
+    });
+  }
+  function q(o) { return Object.keys(o).map(function (k) { return k + '=' + encodeURIComponent(o[k]); }).join('&'); }
+  function size(n) { return n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + ' Ko' : (n / 1048576).toFixed(1).replace('.', ',') + ' Mo'; }
+  function rootOf(label) { return st.roots.filter(function (r) { return r.label === label; })[0]; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  // ── Dossiers du NAS ────────────────────────────────────────────────────────────────
+  function drawRoots() {
+    $('roots').innerHTML = st.roots.map(function (r) {
+      return '<button class="pdf-root' + (r.label === st.root ? ' active' : '') + '" data-root="' + esc(r.label) + '">' + esc(r.label)
+        + (r.mode === 'ro' ? '<span class="ro">lecture seule</span>' : '') + '</button>';
+    }).join('');
+  }
+  function drawCrumbs() {
+    var parts = st.dir ? st.dir.split('/') : [], html = '<a data-dir="">' + esc(st.root) + '</a>';
+    parts.forEach(function (p, i) { html += ' / <a data-dir="' + esc(parts.slice(0, i + 1).join('/')) + '">' + esc(p) + '</a>'; });
+    $('crumbs').innerHTML = st.root ? html : '';
+  }
+  function browse(root, dir) {
+    st.root = root; st.dir = dir || '';
+    drawRoots(); drawCrumbs();
+    var list = $('list');
+    list.innerHTML = '<li class="pdf-note">Chargement…</li>';
+    return api('api/list?' + q({ root: st.root, dir: st.dir })).then(function (r) { return r.json(); }).then(function (d) {
+      var html = '';
+      if (st.dir) html += '<li><button class="pdf-item" data-up="1"><span class="ic">↩</span><span class="nm">Dossier parent</span></button></li>';
+      d.entries.forEach(function (e) {
+        var rel = (st.dir ? st.dir + '/' : '') + e.name;
+        if (e.dir) html += '<li><button class="pdf-item" data-dir="' + esc(rel) + '"><span class="ic">📁</span><span class="nm">' + esc(e.name) + '</span></button></li>';
+        else html += '<li><button class="pdf-item' + (st.current === st.root + '/' + rel ? ' current' : '') + '" data-file="' + esc(rel) + '" title="' + esc(e.name) + '">'
+          + '<span class="ic">📄</span><span class="nm">' + esc(e.name) + '</span><span class="sz">' + size(e.size) + '</span></button></li>';
+      });
+      if (!d.entries.length) html += '<li class="pdf-note">Aucun PDF ni sous-dossier ici.</li>';
+      if (d.truncated) html += '<li class="pdf-note">Dossier très rempli : seuls les 2000 premiers éléments sont affichés.</li>';
+      list.innerHTML = html;
+    }).catch(function (e) { list.innerHTML = '<li class="pdf-note">' + esc(e.message) + '</li>'; });
+  }
+  $('roots').addEventListener('click', function (ev) { var b = ev.target.closest('[data-root]'); if (b) browse(b.getAttribute('data-root'), ''); });
+  $('crumbs').addEventListener('click', function (ev) { var a = ev.target.closest('[data-dir]'); if (a) browse(st.root, a.getAttribute('data-dir')); });
+  $('list').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-up')) return browse(st.root, st.dir.split('/').slice(0, -1).join('/'));
+    if (b.hasAttribute('data-dir')) return browse(st.root, b.getAttribute('data-dir'));
+    if (b.hasAttribute('data-file')) openFile(st.root, b.getAttribute('data-file'));
+  });
+  $('refresh').addEventListener('click', function () { if (st.root) browse(st.root, st.dir); });
+  $('fold').addEventListener('click', function () { $('shell').classList.toggle('folded'); });
+
+  // ── Pont avec PdfCraft (?host=parent : messages pdfcraft:* en postMessage, même origine) ──────────
+  function toEngine(msg, transfer) {
+    if (!st.ready) { st.queue.push([msg, transfer]); return; }
+    engine.contentWindow.postMessage(msg, location.origin, transfer || []);
+  }
+  function openFile(root, rel) {
+    var name = rel.split('/').pop();
+    $('doc').textContent = 'Ouverture de ' + name + '…';
+    api('api/file?' + q({ root: root, path: rel })).then(function (r) {
+      var mtime = Number(r.headers.get('X-Mtime') || 0);
+      return r.arrayBuffer().then(function (buf) {
+        var prev = st.files[name];
+        if (prev && (prev.root !== root || prev.path !== rel)) notify('Un autre fichier ouvert porte le nom « ' + name + ' » : ses enregistrements iront désormais vers ' + root + '/' + rel + '.', 'warning');
+        st.files[name] = { root: root, path: rel, mtime: mtime };
+        st.current = root + '/' + rel;
+        $('doc').textContent = root + ' / ' + rel;
+        toEngine({ type: 'pdfcraft:open', name: name, bytes: buf }, [buf]);
+        if (st.root === root) browse(st.root, st.dir);
+      });
+    }).catch(function (e) { $('doc').textContent = ''; notify('Ouverture impossible : ' + e.message, 'error'); });
+  }
+
+  function putFile(root, rel, bytes, overwrite) {
+    return api('api/file?' + q({ root: root, path: rel, overwrite: overwrite ? '1' : '0' }),
+      { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: bytes }).then(function (r) { return r.json(); });
+  }
+
+  // Enregistrer sous : dans le dossier affiché à gauche, s'il est accessible en écriture.
+  var modalDone = null;
+  function askTarget(name, bytes) {
+    return new Promise(function (resolve) {
+      var r = rootOf(st.root);
+      var rw = r && r.mode === 'rw';
+      $('m-where').textContent = rw ? 'Dans : ' + st.root + (st.dir ? ' / ' + st.dir.split('/').join(' / ') : '')
+        : (st.root ? 'Le dossier affiché (' + st.root + ') est en lecture seule : ouvrez à gauche un dossier accessible en écriture.' : 'Ouvrez d’abord un dossier à gauche.');
+      $('m-name').value = /\.pdf$/i.test(name) ? name : (name || 'document') + '.pdf';
+      $('m-name').disabled = !rw; $('m-ok').disabled = !rw; $('m-err').textContent = '';
+      $('modal').classList.add('on');
+      if (rw) setTimeout(function () { var i = $('m-name'); i.focus(); i.setSelectionRange(0, Math.max(0, i.value.length - 4)); }, 0);
+      var overwrite = false;
+      modalDone = function (ok) {
+        if (!ok) { $('modal').classList.remove('on'); modalDone = null; return resolve(null); }
+        var n = $('m-name').value.trim();
+        if (!/\.pdf$/i.test(n)) n += '.pdf';
+        var rel = (st.dir ? st.dir + '/' : '') + n;
+        $('m-ok').disabled = true;
+        putFile(st.root, rel, bytes, overwrite).then(function (res) {
+          $('modal').classList.remove('on'); modalDone = null;
+          resolve({ root: st.root, path: rel, name: n, res: res });
+        }).catch(function (e) {
+          $('m-ok').disabled = false;
+          if (e.status === 409) { overwrite = true; $('m-err').textContent = '« ' + n + ' » existe déjà : cliquez à nouveau sur Enregistrer pour le remplacer.'; $('m-ok').textContent = 'Remplacer'; }
+          else $('m-err').textContent = e.message;
+        });
+      };
+      $('m-ok').textContent = 'Enregistrer';
+    });
+  }
+  $('m-cancel').addEventListener('click', function () { if (modalDone) modalDone(false); });
+  $('m-ok').addEventListener('click', function () { if (modalDone) modalDone(true); });
+  $('m-name').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('m-ok').click(); if (e.key === 'Escape') $('m-cancel').click(); });
+  $('m-name').addEventListener('input', function () { $('m-ok').textContent = 'Enregistrer'; $('m-err').textContent = ''; });
+
+  function onSave(d) {
+    var name = String(d.name || 'document.pdf'), bytes = d.bytes, known = st.files[name];
+    if (!(bytes instanceof ArrayBuffer)) return notify('Enregistrement reçu sans contenu.', 'error');
+    var job;
+    if (known && !d.saveAs && (rootOf(known.root) || {}).mode === 'rw') {
+      job = putFile(known.root, known.path, bytes, true).then(function (res) { return { root: known.root, path: known.path, name: name, res: res }; });
+    } else {
+      if (known && !d.saveAs) notify('« ' + name + ' » vient d’un dossier en lecture seule : choisissez où l’enregistrer.', 'warning');
+      job = askTarget(name, bytes);
+    }
+    job.then(function (t) {
+      if (!t) return;
+      st.files[t.name] = { root: t.root, path: t.path };
+      st.current = t.root + '/' + t.path;
+      $('doc').textContent = t.root + ' / ' + t.path;
+      notify('Enregistré : ' + t.root + '/' + t.path);
+      if (st.root === t.root) browse(st.root, st.dir);
+    }).catch(function (e) { notify('Enregistrement impossible : ' + e.message, 'error'); });
+  }
+
+  window.addEventListener('message', function (ev) {
+    if (ev.origin !== location.origin || ev.source !== engine.contentWindow) return;
+    var d = ev.data || {};
+    if (d.type === 'pdfcraft:ready') {
+      st.ready = true; $('wait').classList.add('hide');
+      var q2 = st.queue; st.queue = [];
+      q2.forEach(function (m) { toEngine(m[0], m[1]); });
+    } else if (d.type === 'pdfcraft:save') onSave(d);
+    else if (d.type === 'pdfcraft:dirty') { st.dirty = !!d.dirty; $('dirty').classList.toggle('on', st.dirty); }
+    else if (d.type === 'pdfcraft:failed') {
+      $('wait').classList.remove('hide');
+      $('wait').textContent = 'L’éditeur PDF n’a pas pu démarrer : ' + (d.error || 'erreur inconnue')
+        + '. Il demande un navigateur récent avec WebGL (Chrome, Edge, Firefox ou Safari à jour).';
+    }
+  });
+  window.addEventListener('beforeunload', function (e) { if (st.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+  // ── Démarrage ───────────────────────────────────────────────────────────────────────
+  api('api/me').then(function (r) { return r.json(); }).then(function (me) {
+    st.user = me.user; st.roots = me.roots || [];
+    engine.src = 'engine/index.html?' + q({ host: 'parent', author: me.user });
+    if (st.roots.length) browse(st.roots[0].label, '');
+    else $('list').innerHTML = '<li class="pdf-note">Aucun dossier du NAS n’est confié à l’app. Dans Desktroo Apps › PDF, choisissez un compte et les dossiers à ouvrir.</li>';
+  }).catch(function (e) {
+    $('wait').textContent = 'Impossible de démarrer : ' + e.message;
+  });
+})();
+</script>
+</body>
+</html>
