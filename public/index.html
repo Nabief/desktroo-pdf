@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- PDF pour Desktroo — © 2026 Mdm-services.fr. Tous droits réservés. Éditeur : PdfCraft (MIT OR Apache-2.0), servi sans modification sous engine/. -->
+<!-- Desktroo PDF — © 2026 Mdm-services.fr. Tous droits réservés. Éditeur : PdfCraft (MIT OR Apache-2.0), servi sans modification sous engine/. -->
 <html lang="fr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PDF</title>
+<title>Desktroo PDF</title>
 <link rel="stylesheet" href="../_sdk/desktroo-app.css">
 <script src="../_sdk/desktroo-app.js"></script>
 <style>
@@ -33,6 +33,16 @@
   .pdf-item .ic { width: 18px; flex-shrink: 0; text-align: center; }
   .pdf-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pdf-item .sz { font-size: 11px; color: var(--text-dim); flex-shrink: 0; }
+  .pdf-root .k { margin-right: 4px; }
+  .pdf-src-acts { padding: 0 14px 6px; font-size: 11.5px; color: var(--text-dim); }
+  .pdf-src-acts button { background: none; border: 0; padding: 0; color: var(--text-dim); text-decoration: underline; cursor: pointer; font: inherit; }
+  .pdf-src-acts button:hover { color: var(--danger); }
+  .pdf-add { margin: 4px 10px 8px; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px dashed var(--glass-border); background: none;
+    color: var(--accent2); font: 500 12.5px var(--font-body); cursor: pointer; text-align: left; }
+  .pdf-add:hover { border-color: rgba(var(--accent-rgb),0.5); }
+  .pdf-modal select { width: 100%; }
+  .pdf-modal .chk { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12.5px; color: var(--text-dim); }
+  .pdf-modal .hint { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; line-height: 1.45; }
   .pdf-note { padding: 10px 14px; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
   .pdf-foot { padding: 8px 14px 10px; font-size: 11px; color: var(--text-dim); border-top: 1px solid rgba(255,255,255,0.07); }
   .pdf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
@@ -54,14 +64,16 @@
 </head>
 <body>
 <div class="pdf-shell" id="shell">
-  <nav class="pdf-side" aria-label="Dossiers du NAS">
+  <nav class="pdf-side" aria-label="Fichiers">
     <div class="pdf-side-head">
-      <span class="t">Fichiers du NAS</span>
+      <span class="t">Fichiers</span>
       <button class="dk-btn" id="refresh" title="Actualiser">↻</button>
     </div>
     <div class="pdf-roots" id="roots"></div>
     <div class="pdf-crumbs" id="crumbs"></div>
+    <div class="pdf-src-acts" id="srcacts"></div>
     <ul class="pdf-list" id="list"></ul>
+    <button class="pdf-add" id="add">＋ Nextcloud ou Synology</button>
     <div class="pdf-foot">Éditeur : PdfCraft (logiciel libre, MIT / Apache-2.0)</div>
   </nav>
   <section class="pdf-main">
@@ -89,12 +101,40 @@
   </div>
 </div>
 
+<div class="pdf-modal" id="cmodal" role="dialog" aria-modal="true" aria-labelledby="c-title">
+  <div class="dk-card">
+    <h2 id="c-title">Ajouter un cloud</h2>
+    <label for="c-kind">Type</label>
+    <select class="dk-input" id="c-kind">
+      <option value="nextcloud">Nextcloud</option>
+      <option value="webdav">Synology Drive (WebDAV) ou autre serveur WebDAV</option>
+    </select>
+    <label for="c-url">Adresse</label>
+    <input class="dk-input" id="c-url" autocomplete="off" placeholder="https://cloud.mondomaine.fr">
+    <div class="hint" id="c-urlhint"></div>
+    <label for="c-login">Identifiant</label>
+    <input class="dk-input" id="c-login" autocomplete="off">
+    <label for="c-pass">Mot de passe d’application</label>
+    <input class="dk-input" id="c-pass" type="password" autocomplete="new-password">
+    <div class="hint" id="c-passhint"></div>
+    <label for="c-label">Nom affiché (facultatif)</label>
+    <input class="dk-input" id="c-label" autocomplete="off" maxlength="40">
+    <label class="chk"><input type="checkbox" id="c-insecure"> Certificat autosigné accepté (réseau local uniquement)</label>
+    <div class="err" id="c-err"></div>
+    <div class="acts">
+      <button class="dk-btn" id="c-cancel">Annuler</button>
+      <button class="dk-btn primary" id="c-ok">Connecter</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var st = { user: '', roots: [], root: '', dir: '', ready: false, queue: [], files: {}, dirty: false, current: '' };
+  var st = { user: '', sources: [], src: '', dir: '', ready: false, queue: [], files: {}, dirty: false, current: '' };
   var engine = $('engine');
+  var KIND_IC = { nas: '🗄', nextcloud: '☁', webdav: '☁' };
 
   function notify(t, level) {
     if (window.desktroo && desktroo.inDesktroo) desktroo.notify(t, level);
@@ -110,33 +150,38 @@
   }
   function q(o) { return Object.keys(o).map(function (k) { return k + '=' + encodeURIComponent(o[k]); }).join('&'); }
   function size(n) { return n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + ' Ko' : (n / 1048576).toFixed(1).replace('.', ',') + ' Mo'; }
-  function rootOf(label) { return st.roots.filter(function (r) { return r.label === label; })[0]; }
+  function srcOf(id) { return st.sources.filter(function (r) { return r.src === id; })[0]; }
+  function srcName(id) { var s = srcOf(id); return s ? s.label : id; }
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
-  // ── Dossiers du NAS ────────────────────────────────────────────────────────────────
-  function drawRoots() {
-    $('roots').innerHTML = st.roots.map(function (r) {
-      return '<button class="pdf-root' + (r.label === st.root ? ' active' : '') + '" data-root="' + esc(r.label) + '">' + esc(r.label)
+  // ── Sources : dossiers du NAS confiés à l'app, puis clouds de l'utilisateur ─────────────────────────
+  function drawSources() {
+    $('roots').innerHTML = st.sources.map(function (r) {
+      return '<button class="pdf-root' + (r.src === st.src ? ' active' : '') + '" data-src="' + esc(r.src) + '" title="' + esc(r.host ? r.login + ' @ ' + r.host : r.label) + '">'
+        + '<span class="k">' + (KIND_IC[r.kind] || '') + '</span>' + esc(r.label)
         + (r.mode === 'ro' ? '<span class="ro">lecture seule</span>' : '') + '</button>';
     }).join('');
+    var s = srcOf(st.src);
+    $('srcacts').innerHTML = s && s.kind !== 'nas' ? esc(s.login + ' @ ' + s.host) + ' · <button id="unlink">Retirer cette connexion</button>' : '';
   }
   function drawCrumbs() {
-    var parts = st.dir ? st.dir.split('/') : [], html = '<a data-dir="">' + esc(st.root) + '</a>';
+    var parts = st.dir ? st.dir.split('/') : [], html = '<a data-dir="">' + esc(srcName(st.src)) + '</a>';
     parts.forEach(function (p, i) { html += ' / <a data-dir="' + esc(parts.slice(0, i + 1).join('/')) + '">' + esc(p) + '</a>'; });
-    $('crumbs').innerHTML = st.root ? html : '';
+    $('crumbs').innerHTML = st.src ? html : '';
   }
-  function browse(root, dir) {
-    st.root = root; st.dir = dir || '';
-    drawRoots(); drawCrumbs();
+  function browse(src, dir) {
+    st.src = src; st.dir = dir || '';
+    drawSources(); drawCrumbs();
     var list = $('list');
     list.innerHTML = '<li class="pdf-note">Chargement…</li>';
-    return api('api/list?' + q({ root: st.root, dir: st.dir })).then(function (r) { return r.json(); }).then(function (d) {
+    return api('api/list?' + q({ src: st.src, dir: st.dir })).then(function (r) { return r.json(); }).then(function (d) {
+      if (src !== st.src) return;
       var html = '';
       if (st.dir) html += '<li><button class="pdf-item" data-up="1"><span class="ic">↩</span><span class="nm">Dossier parent</span></button></li>';
       d.entries.forEach(function (e) {
         var rel = (st.dir ? st.dir + '/' : '') + e.name;
         if (e.dir) html += '<li><button class="pdf-item" data-dir="' + esc(rel) + '"><span class="ic">📁</span><span class="nm">' + esc(e.name) + '</span></button></li>';
-        else html += '<li><button class="pdf-item' + (st.current === st.root + '/' + rel ? ' current' : '') + '" data-file="' + esc(rel) + '" title="' + esc(e.name) + '">'
+        else html += '<li><button class="pdf-item' + (st.current === st.src + '/' + rel ? ' current' : '') + '" data-file="' + esc(rel) + '" title="' + esc(e.name) + '">'
           + '<span class="ic">📄</span><span class="nm">' + esc(e.name) + '</span><span class="sz">' + size(e.size) + '</span></button></li>';
       });
       if (!d.entries.length) html += '<li class="pdf-note">Aucun PDF ni sous-dossier ici.</li>';
@@ -144,52 +189,91 @@
       list.innerHTML = html;
     }).catch(function (e) { list.innerHTML = '<li class="pdf-note">' + esc(e.message) + '</li>'; });
   }
-  $('roots').addEventListener('click', function (ev) { var b = ev.target.closest('[data-root]'); if (b) browse(b.getAttribute('data-root'), ''); });
-  $('crumbs').addEventListener('click', function (ev) { var a = ev.target.closest('[data-dir]'); if (a) browse(st.root, a.getAttribute('data-dir')); });
+  $('roots').addEventListener('click', function (ev) { var b = ev.target.closest('[data-src]'); if (b) browse(b.getAttribute('data-src'), ''); });
+  $('crumbs').addEventListener('click', function (ev) { var a = ev.target.closest('[data-dir]'); if (a) browse(st.src, a.getAttribute('data-dir')); });
+  $('srcacts').addEventListener('click', function (ev) {
+    if (!ev.target.closest('#unlink')) return;
+    var s = srcOf(st.src); if (!s || !confirm('Retirer la connexion « ' + s.label + ' » ? Vos fichiers restent sur le serveur.')) return;
+    api('api/dav?' + q({ id: s.src.slice(4) }), { method: 'DELETE' }).then(function () {
+      st.sources = st.sources.filter(function (x) { return x.src !== s.src; });
+      if (st.sources.length) browse(st.sources[0].src, ''); else { st.src = ''; drawSources(); drawCrumbs(); $('list').innerHTML = ''; }
+    }).catch(function (e) { notify(e.message, 'error'); });
+  });
   $('list').addEventListener('click', function (ev) {
     var b = ev.target.closest('button'); if (!b) return;
-    if (b.hasAttribute('data-up')) return browse(st.root, st.dir.split('/').slice(0, -1).join('/'));
-    if (b.hasAttribute('data-dir')) return browse(st.root, b.getAttribute('data-dir'));
-    if (b.hasAttribute('data-file')) openFile(st.root, b.getAttribute('data-file'));
+    if (b.hasAttribute('data-up')) return browse(st.src, st.dir.split('/').slice(0, -1).join('/'));
+    if (b.hasAttribute('data-dir')) return browse(st.src, b.getAttribute('data-dir'));
+    if (b.hasAttribute('data-file')) openFile(st.src, b.getAttribute('data-file'));
   });
-  $('refresh').addEventListener('click', function () { if (st.root) browse(st.root, st.dir); });
+  $('refresh').addEventListener('click', function () { if (st.src) browse(st.src, st.dir); });
   $('fold').addEventListener('click', function () { $('shell').classList.toggle('folded'); });
+
+  // ── Ajout d'un cloud ─────────────────────────────────────────────────────────────────
+  function kindHints() {
+    var nc = $('c-kind').value === 'nextcloud';
+    $('c-url').placeholder = nc ? 'https://cloud.mondomaine.fr' : 'https://nas.local:5006/home/Drive';
+    $('c-urlhint').textContent = nc ? 'L’adresse de la page de connexion de votre Nextcloud.'
+      : 'Synology : activez le paquet « WebDAV Server » dans DSM. Adresse en https sur le port 5006, suivie du dossier : /home/Drive pour « Mon Drive », ou le nom d’un Team Folder (ex. /Commun).';
+    $('c-passhint').textContent = nc ? 'Nextcloud › Paramètres personnels › Sécurité › « Créer un mot de passe d’application ». Il se révoque à tout moment.'
+      : 'Le mot de passe du compte DSM (avec la double authentification, créez un compte dédié). Il est gardé chiffré dans l’app.';
+  }
+  $('c-kind').addEventListener('change', kindHints);
+  $('add').addEventListener('click', function () {
+    ['c-url', 'c-login', 'c-pass', 'c-label'].forEach(function (i) { $(i).value = ''; });
+    $('c-insecure').checked = false; $('c-err').textContent = ''; $('c-ok').disabled = false; kindHints();
+    $('cmodal').classList.add('on'); setTimeout(function () { $('c-url').focus(); }, 0);
+  });
+  $('c-cancel').addEventListener('click', function () { $('cmodal').classList.remove('on'); });
+  $('c-ok').addEventListener('click', function () {
+    $('c-ok').disabled = true; $('c-err').textContent = 'Vérification de la connexion…';
+    api('api/dav', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      kind: $('c-kind').value, url: $('c-url').value, login: $('c-login').value, pass: $('c-pass').value,
+      label: $('c-label').value, insecure: $('c-insecure').checked }) }).then(function (r) { return r.json(); }).then(function (s) {
+      $('cmodal').classList.remove('on'); $('c-pass').value = '';
+      st.sources.push(s); browse(s.src, '');
+      notify('Connecté à ' + s.label);
+    }).catch(function (e) { $('c-ok').disabled = false; $('c-err').textContent = e.message; });
+  });
+  $('c-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('c-ok').click(); });
 
   // ── Pont avec PdfCraft (?host=parent : messages pdfcraft:* en postMessage, même origine) ──────────
   function toEngine(msg, transfer) {
     if (!st.ready) { st.queue.push([msg, transfer]); return; }
     engine.contentWindow.postMessage(msg, location.origin, transfer || []);
   }
-  function openFile(root, rel) {
+  function openFile(src, rel) {
     var name = rel.split('/').pop();
     $('doc').textContent = 'Ouverture de ' + name + '…';
-    api('api/file?' + q({ root: root, path: rel })).then(function (r) {
-      var mtime = Number(r.headers.get('X-Mtime') || 0);
+    api('api/file?' + q({ src: src, path: rel })).then(function (r) {
+      var etag = r.headers.get('X-Etag') || '';
       return r.arrayBuffer().then(function (buf) {
         var prev = st.files[name];
-        if (prev && (prev.root !== root || prev.path !== rel)) notify('Un autre fichier ouvert porte le nom « ' + name + ' » : ses enregistrements iront désormais vers ' + root + '/' + rel + '.', 'warning');
-        st.files[name] = { root: root, path: rel, mtime: mtime };
-        st.current = root + '/' + rel;
-        $('doc').textContent = root + ' / ' + rel;
+        if (prev && (prev.src !== src || prev.path !== rel)) notify('Un autre fichier ouvert porte le nom « ' + name + ' » : ses enregistrements iront désormais vers ' + srcName(src) + '/' + rel + '.', 'warning');
+        st.files[name] = { src: src, path: rel, etag: etag };
+        st.current = src + '/' + rel;
+        $('doc').textContent = srcName(src) + ' / ' + rel;
         toEngine({ type: 'pdfcraft:open', name: name, bytes: buf }, [buf]);
-        if (st.root === root) browse(st.root, st.dir);
+        if (st.src === src) browse(st.src, st.dir);
       });
     }).catch(function (e) { $('doc').textContent = ''; notify('Ouverture impossible : ' + e.message, 'error'); });
   }
 
-  function putFile(root, rel, bytes, overwrite) {
-    return api('api/file?' + q({ root: root, path: rel, overwrite: overwrite ? '1' : '0' }),
-      { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: bytes }).then(function (r) { return r.json(); });
+  function putFile(src, rel, bytes, o) {
+    o = o || {};
+    var params = { src: src, path: rel, overwrite: o.overwrite ? '1' : '0' };
+    if (o.etag) params.etag = o.etag;
+    return api('api/file?' + q(params), { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: bytes })
+      .then(function (r) { return r.json(); });
   }
 
   // Enregistrer sous : dans le dossier affiché à gauche, s'il est accessible en écriture.
   var modalDone = null;
-  function askTarget(name, bytes) {
+  function askTarget(name, bytes, why) {
     return new Promise(function (resolve) {
-      var r = rootOf(st.root);
+      var r = srcOf(st.src);
       var rw = r && r.mode === 'rw';
-      $('m-where').textContent = rw ? 'Dans : ' + st.root + (st.dir ? ' / ' + st.dir.split('/').join(' / ') : '')
-        : (st.root ? 'Le dossier affiché (' + st.root + ') est en lecture seule : ouvrez à gauche un dossier accessible en écriture.' : 'Ouvrez d’abord un dossier à gauche.');
+      $('m-where').textContent = (why ? why + ' ' : '') + (rw ? 'Dans : ' + srcName(st.src) + (st.dir ? ' / ' + st.dir.split('/').join(' / ') : '')
+        : (st.src ? 'Le dossier affiché (' + srcName(st.src) + ') est en lecture seule : ouvrez à gauche un dossier accessible en écriture.' : 'Ouvrez d’abord un dossier à gauche.'));
       $('m-name').value = /\.pdf$/i.test(name) ? name : (name || 'document') + '.pdf';
       $('m-name').disabled = !rw; $('m-ok').disabled = !rw; $('m-err').textContent = '';
       $('modal').classList.add('on');
@@ -199,14 +283,14 @@
         if (!ok) { $('modal').classList.remove('on'); modalDone = null; return resolve(null); }
         var n = $('m-name').value.trim();
         if (!/\.pdf$/i.test(n)) n += '.pdf';
-        var rel = (st.dir ? st.dir + '/' : '') + n;
+        var rel = (st.dir ? st.dir + '/' : '') + n, src = st.src;
         $('m-ok').disabled = true;
-        putFile(st.root, rel, bytes, overwrite).then(function (res) {
+        putFile(src, rel, bytes.slice(0), { overwrite: overwrite }).then(function (res) {
           $('modal').classList.remove('on'); modalDone = null;
-          resolve({ root: st.root, path: rel, name: n, res: res });
+          resolve({ src: src, path: rel, name: n, res: res });
         }).catch(function (e) {
           $('m-ok').disabled = false;
-          if (e.status === 409) { overwrite = true; $('m-err').textContent = '« ' + n + ' » existe déjà : cliquez à nouveau sur Enregistrer pour le remplacer.'; $('m-ok').textContent = 'Remplacer'; }
+          if (e.status === 409) { overwrite = true; $('m-err').textContent = '« ' + n + ' » existe déjà : cliquez à nouveau pour le remplacer.'; $('m-ok').textContent = 'Remplacer'; }
           else $('m-err').textContent = e.message;
         });
       };
@@ -222,19 +306,27 @@
     var name = String(d.name || 'document.pdf'), bytes = d.bytes, known = st.files[name];
     if (!(bytes instanceof ArrayBuffer)) return notify('Enregistrement reçu sans contenu.', 'error');
     var job;
-    if (known && !d.saveAs && (rootOf(known.root) || {}).mode === 'rw') {
-      job = putFile(known.root, known.path, bytes, true).then(function (res) { return { root: known.root, path: known.path, name: name, res: res }; });
+    if (known && !d.saveAs && (srcOf(known.src) || {}).mode === 'rw') {
+      // Cloud : remplacement seulement si le fichier n'a pas changé depuis son ouverture (ETag) ; sinon, on demande.
+      job = putFile(known.src, known.path, bytes.slice(0), { overwrite: true, etag: known.etag }).then(function (res) {
+        return { src: known.src, path: known.path, name: name, res: res };
+      }).catch(function (e) {
+        if (e.status !== 412) throw e;
+        if (confirm('« ' + name + ' » a été modifié par quelqu’un d’autre depuis que vous l’avez ouvert.\n\nOK : remplacer sa version par la vôtre.\nAnnuler : enregistrer la vôtre sous un autre nom.')) {
+          return putFile(known.src, known.path, bytes.slice(0), { overwrite: true }).then(function (res) { return { src: known.src, path: known.path, name: name, res: res }; });
+        }
+        return askTarget(name.replace(/\.pdf$/i, '') + ' (ma version).pdf', bytes);
+      });
     } else {
-      if (known && !d.saveAs) notify('« ' + name + ' » vient d’un dossier en lecture seule : choisissez où l’enregistrer.', 'warning');
-      job = askTarget(name, bytes);
+      job = askTarget(name, bytes, known && !d.saveAs ? '« ' + name + ' » vient d’un dossier en lecture seule.' : '');
     }
     job.then(function (t) {
       if (!t) return;
-      st.files[t.name] = { root: t.root, path: t.path };
-      st.current = t.root + '/' + t.path;
-      $('doc').textContent = t.root + ' / ' + t.path;
-      notify('Enregistré : ' + t.root + '/' + t.path);
-      if (st.root === t.root) browse(st.root, st.dir);
+      st.files[t.name] = { src: t.src, path: t.path, etag: (t.res && t.res.etag) || '' };
+      st.current = t.src + '/' + t.path;
+      $('doc').textContent = srcName(t.src) + ' / ' + t.path;
+      notify('Enregistré : ' + srcName(t.src) + '/' + t.path);
+      if (st.src === t.src) browse(st.src, st.dir);
     }).catch(function (e) { notify('Enregistrement impossible : ' + e.message, 'error'); });
   }
 
@@ -257,10 +349,10 @@
 
   // ── Démarrage ───────────────────────────────────────────────────────────────────────
   api('api/me').then(function (r) { return r.json(); }).then(function (me) {
-    st.user = me.user; st.roots = me.roots || [];
+    st.user = me.user; st.sources = me.sources || [];
     engine.src = 'engine/index.html?' + q({ host: 'parent', author: me.user });
-    if (st.roots.length) browse(st.roots[0].label, '');
-    else $('list').innerHTML = '<li class="pdf-note">Aucun dossier du NAS n’est confié à l’app. Dans Desktroo Apps › PDF, choisissez un compte et les dossiers à ouvrir.</li>';
+    if (st.sources.length) browse(st.sources[0].src, '');
+    else $('list').innerHTML = '<li class="pdf-note">Aucun dossier pour l’instant : ajoutez votre Nextcloud ou votre Synology ci-dessous, ou confiez des dossiers du NAS à l’app dans Desktroo Apps.</li>';
   }).catch(function (e) {
     $('wait').textContent = 'Impossible de démarrer : ' + e.message;
   });

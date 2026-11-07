@@ -1,4 +1,4 @@
-// PDF pour Desktroo — © 2026 Mdm-services.fr. Tous droits réservés.
+// Desktroo PDF — © 2026 Mdm-services.fr. Tous droits réservés.
 // Logiciel propriétaire, distribué avec l'abonnement Desktroo (https://desktroo.fr).
 // Lire, annoter et modifier les PDF du NAS dans une fenêtre du bureau. L'éditeur est PdfCraft (version web officielle,
 // non modifiée, MIT OR Apache-2.0, servie sous /engine/) ; cette app ne fait que lui passer les fichiers du NAS et
@@ -11,6 +11,8 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
+const { Transform } = require('stream');
+const dav = require('./dav');
 
 const PORT = 8080;
 const SECRET = process.env.DESKTROO_APP_SECRET || '';
@@ -55,6 +57,7 @@ function identity(req) {
 
 // Chemin demandé → chemin réel, toujours à l'intérieur d'un dossier confié (liens symboliques compris).
 async function resolveIn(rootLabel, rel, opts) {
+  rootLabel = String(rootLabel || '').replace(/^nas:/, '');
   const r = roots().find((x) => x.label === rootLabel);
   if (!r) throw fail('Dossier inconnu.', 404);
   const clean = String(rel || '').replace(/\\/g, '/');
@@ -71,6 +74,32 @@ async function resolveIn(rootLabel, rel, opts) {
 }
 
 const isPdf = (n) => /\.pdf$/i.test(n);
+
+// Flux qui n'accepte qu'un contenu commençant par « %PDF- » et pas plus de MAX_PDF octets.
+function pdfGuard() {
+  let head = Buffer.alloc(0), ok = false, n = 0;
+  return new Transform({
+    transform(chunk, _enc, cb) {
+      n += chunk.length;
+      if (n > MAX_PDF) return cb(fail('Fichier trop gros (512 Mo au plus).', 413));
+      if (!ok) {
+        head = Buffer.concat([head, chunk]);
+        if (head.length < 5) return cb();
+        if (head.subarray(0, 5).toString('latin1') !== '%PDF-') return cb(fail('Le contenu reçu n’est pas un PDF.', 400));
+        ok = true; chunk = head;
+      }
+      cb(null, chunk);
+    },
+    flush(cb) { cb(ok ? null : fail('Le contenu reçu n’est pas un PDF.', 400)); },
+  });
+}
+
+async function readJson(req) {
+  const parts = []; let n = 0;
+  for await (const c of req) { n += c.length; if (n > 16384) throw fail('Requête trop grosse.', 413); parts.push(c); }
+  try { const o = JSON.parse(Buffer.concat(parts).toString('utf8')); if (o && typeof o === 'object') return o; } catch (_) { /* invalide */ }
+  throw fail('Requête invalide.');
+}
 const hidden = (n) => n.startsWith('.') || n === '@eaDir' || n === '#recycle' || n === '$RECYCLE.BIN';
 
 async function apiList(q) {
@@ -179,14 +208,41 @@ const server = http.createServer(async (req, res) => {
       const rel = decodeURIComponent(p.slice('/engine/'.length)) || 'index.html';
       return await serveStatic(req, res, ENGINE, rel, { 'Content-Security-Policy': "frame-ancestors 'self'" });
     }
+    const q = url.searchParams;
     if (p === '/api/me' && req.method === 'GET') {
-      return json(res, 200, { user, roots: roots().map((r) => ({ label: r.label, mode: r.mode })) });
+      const nas = roots().map((r) => ({ src: 'nas:' + r.label, kind: 'nas', label: r.label, mode: r.mode }));
+      return json(res, 200, { user, sources: nas.concat(dav.list(user)) });
     }
-    if (p === '/api/list' && req.method === 'GET') return json(res, 200, await apiList(url.searchParams));
-    if (p === '/api/file' && (req.method === 'GET' || req.method === 'HEAD')) return await apiRead(req, res, url.searchParams, user);
-    if (p === '/api/file' && req.method === 'PUT') return json(res, 200, await apiWrite(req, res, url.searchParams, user));
+    if (p === '/api/dav' && req.method === 'POST') return json(res, 200, await dav.add(user, await readJson(req)));
+    if (p === '/api/dav' && req.method === 'DELETE') { dav.remove(user, String(q.get('id') || '')); return json(res, 200, { ok: true }); }
+    const src = String(q.get('src') || '');
+    const davId = src.startsWith('dav:') ? src.slice(4) : '';
+    if (p === '/api/list' && req.method === 'GET') {
+      if (davId) return json(res, 200, await dav.listDir(user, davId, q.get('dir')));
+      return json(res, 200, await apiList(q));
+    }
+    if (p === '/api/file' && req.method === 'GET') {
+      if (davId) { console.log(`[pdf] ${user} ouvre ${src}/${q.get('path')}`); return await dav.readFile(user, davId, String(q.get('path') || ''), res, MAX_PDF); }
+      return await apiRead(req, res, q, user);
+    }
+    if (p === '/api/file' && req.method === 'PUT') {
+      if (davId) {
+        const name = path.basename(String(q.get('path') || ''));
+        if (!isPdf(name) || hidden(name) || !/^[^/\\:*?"<>|\x00-\x1f]{1,255}$/.test(name)) throw fail('Nom de fichier invalide (il doit finir par .pdf).', 400);
+        if (Number(req.headers['content-length'] || 0) > MAX_PDF) throw fail('Fichier trop gros (512 Mo au plus).', 413);
+        const r = await dav.writeFile(user, davId, String(q.get('path')), req.pipe(pdfGuard()), { etag: q.get('etag') || '', overwrite: q.get('overwrite') === '1', headers: req.headers });
+        console.log(`[pdf] ${user} enregistre ${src}/${q.get('path')}`);
+        return json(res, 200, r);
+      }
+      return json(res, 200, await apiWrite(req, res, q, user));
+    }
     return send(res, 404, 'Introuvable');
   } catch (e) {
+    if (!e.status && (e.code === 'EACCES' || e.code === 'EPERM')) {
+      e = fail('Le compte du NAS prêté à l’app n’a pas le droit d’ouvrir ce dossier. Choisissez dans Desktroo Apps un compte qui y a accès, ou un autre dossier.', 403);
+    } else if (!e.status && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) {
+      e = fail('Introuvable : le fichier ou le dossier a peut-être été déplacé.', 404);
+    }
     if (!e.status) console.error('[pdf]', e);
     if (res.headersSent) return res.destroy();
     return json(res, e.status || 500, { ok: false, error: e.status ? e.message : 'Erreur interne.' });

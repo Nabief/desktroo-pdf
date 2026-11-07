@@ -21,9 +21,9 @@ LABEL org.opencontainers.image.title="PDF pour Desktroo" \
       fr.desktroo.pdfcraft="${PDFCRAFT_VERSION}"
 WORKDIR /app
 COPY --from=engine /engine ./engine
-COPY server.js ./
+COPY server.js dav.js ./
 COPY public ./public
-ENV NODE_ENV=production
+ENV NODE_ENV=production DATA_DIR=/data
 EXPOSE 8080
 # Desktroo Apps lance le conteneur sous le compte du NAS prêté à l'app, en lecture seule hors des dossiers confiés.
 CMD ["node", "server.js"]
